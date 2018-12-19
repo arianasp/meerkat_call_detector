@@ -31,6 +31,7 @@ import librosa
 import csv
 import pandas
 import re
+import keras.layers as layers
 
 #------------------------------ CLASSES -------------------------------
 class CallExtractionParams:
@@ -263,12 +264,16 @@ def generate_batch(batch_size,clips_dir,augment,call_types = ['cc','sn','ld','mo
 def data_generator(clips_dir,batch_size=10,augment=False,call_types = ['cc','sn','ld','mov','agg','alarm','soc','hyb','unk','oth'],call_probs = None,p_noise = 0.5, cnn_dim = 1, mel=False):
     while True:
         yield generate_batch(batch_size,clips_dir,augment,call_types,call_probs,p_noise,cnn_dim,mel)
-        
-#MODEL CONSTRUCTION
 
-def conv_pool(inputs, filters):
-    conv = Conv1D(filters, (3), padding='same')(inputs)
-    conv = Activation('relu')(conv)
+        
+ #MODEL CONSTRUCTION
+
+#1d code - working (for creating models)
+def conv_pool(inputs, filters, n_convs=3):
+    conv = inputs
+    for idx in range(n_convs):
+        conv = Conv1D(filters, (3), padding='same')(conv)
+        conv = Activation('relu')(conv)
     conv = AveragePooling1D()(conv)
 
     return conv
@@ -284,31 +289,39 @@ def conv_upsample(inputs, residual, filters):
     return conv
 
 def construct_unet_model():
-  input_layer = Input(batch_shape=(None,512,128))
-  conv = conv_pool(input_layer, 32)
-  res1 = conv
-  outputs = []
-  for idx in range(5):
-      conv = conv_pool(conv, 32*(idx+1))
-      outputs.append(conv)
+    #input_layer = Input(batch_shape=(None,None,None))
+    input_layer = Input(batch_shape=(None,512,128))
+    conv = conv_pool(input_layer, 32)
+    res1 = conv
+    outputs = []
+    
+    #could modify to more layers (more than 5)
+    for idx in range(5):
+        conv = conv_pool(conv, 32*(idx+1))
+        outputs.append(conv)
 
-  for idx in range(5):
-      conv = conv_upsample(conv, outputs[-(idx+1)], 32*(5-idx))
+    for idx in range(5):
+        conv = conv_upsample(conv, outputs[-(idx+1)], 32*(5-idx))
 
-  conv = conv_upsample(conv, res1,  32)
+    conv = conv_upsample(conv, res1,  32)
 
-  conv = Conv1D(1, (3), padding='same')(conv)
-  conv = Activation('sigmoid')(conv)
+    #fully connected layer equivalent
+    conv = Conv1D(1, (3), padding='same')(conv)
+    conv = Activation('sigmoid')(conv)
 
-  model = Model(input_layer, conv)
-  model.compile(RMSprop(lr=2.5e-4), loss='binary_crossentropy')
+    model = Model(input_layer, conv)
+
+    #change optimizer to ADAM?
+    model.compile(RMSprop(lr=2.5e-4), loss='binary_crossentropy')
   
-  return model
+    return model
 
 #2d CNN functions
-def conv_pool_2d(inputs, filters):
-    conv = Conv2D(filters, (3,3), padding='same')(inputs)
-    conv = Activation('relu')(conv)
+def conv_pool_2d(inputs, filters, n_convs=3):
+    conv = inputs
+    for idx in range(n_convs):
+        conv = Conv2D(filters, (3,3), padding='same')(conv)
+        conv = Activation('relu')(conv)
     conv = AveragePooling2D()(conv)
 
     return conv
@@ -324,26 +337,35 @@ def conv_upsample_2d(inputs, residual, filters):
     return conv
 
 def construct_unet_model_2d():
-  input_layer = Input(batch_shape=(None,512,128,1))
-  conv = conv_pool_2d(input_layer, 32)
-  res1 = conv
-  outputs = []
-  for idx in range(5):
-      conv = conv_pool_2d(conv, 32*(idx+1))
-      outputs.append(conv)
+    input_layer = Input(batch_shape=(None,512,128,1))
+    conv = conv_pool_2d(input_layer, 32)
+    res1 = conv
+    outputs = []
+    for idx in range(5):
+        conv = conv_pool_2d(conv, 32*(idx+1))
+        outputs.append(conv)
 
-  for idx in range(5):
-      conv = conv_upsample_2d(conv, outputs[-(idx+1)], 32*(5-idx))
+    for idx in range(5):
+        conv = conv_upsample_2d(conv, outputs[-(idx+1)], 32*(5-idx))
 
-  conv = conv_upsample_2d(conv, res1,  32)
+    conv = conv_upsample_2d(conv, res1,  32)
 
-  conv = Conv2D(1, (3), padding='same')(conv)
-  conv = Activation('sigmoid')(conv)
+    # reduce the channels to 1 using a 1x1 2D convolution
+    conv = layers.Conv2D(1, (1,1), padding='same')(conv)
+    # conv should be shape (512,128,1) at this point
+    # reshape to remove the last dimension so we can use 1D convolution
+    conv = layers.Reshape((512,128))(conv)
+    # reduce the last dimension to 1 using a 1x 1D convolution
+    logits = layers.Conv1D(1, 1, padding='same')(conv)
+    # logits should be shape (512,1)
+    probs = layers.Activation('sigmoid')(logits)
+    probs = layers.Reshape((512,1,1))(probs)
 
-  model = Model(input_layer, conv)
-  model.compile(RMSprop(lr=2.5e-4), loss='binary_crossentropy')
+
+    model = Model(input_layer, probs)
+    model.compile(RMSprop(lr=2.5e-4), loss='binary_crossentropy')
   
-  return model
+    return model
 
 #MODEL TESTING
 
