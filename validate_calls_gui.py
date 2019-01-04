@@ -1,5 +1,5 @@
 """
-GUI for validating meerkat calls
+GUI for validating meerkat calls.
 
 TODO: 
     Fix row and columns so that output is stored correctly
