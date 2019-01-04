@@ -14,23 +14,17 @@ import pandas
 import math
 import os.path
 import datetime
+import time
+
+from Tkinter import *
+import Tkinter, Tkconstants, tkFileDialog
+ 
 
 #PARAMETERS
 get_user_input = False
 NROW = 4
 NCOL = 4
 SAMPRATE = 8000
-
-#INSTRUCTIONS:
-#Spacebar - move to next screen
-#Backspace - move to previous screen
-#s - save progress
-#Click (if not highlighted) - play  call
-#Click (if highlighted) - unhighlight
-#Shift-click - color red = not a call
-#Command-click - color yellow = not sure if a call
-#Control-click - color green = misaligned call boundaries
-
 
 #FUNCS
 #Convert HMS format times to seconds
@@ -180,6 +174,12 @@ def init_grid(NROW,NCOL):
             grid[row].append(0)  # Append a cell
     return(grid) 
  
+
+#MAIN
+
+#Disable some warnings that were popping up falsely
+pandas.options.mode.chained_assignment = None
+
 # Define some colors
 BLACK = (0, 0, 0)
 WHITE = (255, 255, 255)
@@ -197,8 +197,8 @@ MARGIN = 5
 
 WINDOW_SIZE = [(WIDTH+MARGIN)*NCOL+MARGIN, (HEIGHT+MARGIN)*NROW+MARGIN]
 
-AUD_FILE = '/Users/astrandb/Dropbox/meerkats/data/Kalahari2017/HM_2017_3/COLLAR3/AUDIO3/HM_HRT_R07_20170903-20170908/HM_HRT_R07_20170903-20170908_file_6_(2017_09_07-05_44_59)_ASWMUX221092.wav'
-LAB_FILE = '/Users/astrandb/Dropbox/meerkats/meerkats_shared/labeling/autolabels_new_2dconvolution/HM_HRT_R07_20170903-20170908_file_6_(2017_09_07-05_44_59)_ASWMUX221092_label_cnn_20epoch_proportional_aug_2dconv_20181218_1-16200.0_thresh0.99.csv'
+#AUD_FILE = '/Users/astrandb/Dropbox/meerkats/data/Kalahari2017/HM_2017_3/COLLAR3/AUDIO3/HM_HRT_R07_20170903-20170908/HM_HRT_R07_20170903-20170908_file_6_(2017_09_07-05_44_59)_ASWMUX221092.wav'
+#LAB_FILE = '/Users/astrandb/Dropbox/meerkats/meerkats_shared/labeling/autolabels_new_2dconvolution/HM_HRT_R07_20170903-20170908_file_6_(2017_09_07-05_44_59)_ASWMUX221092_label_cnn_20epoch_proportional_aug_2dconv_20181218_1-16200.0_thresh0.99.csv'
 
 #PRINT INSTRUCTIONS
 print('')
@@ -228,6 +228,28 @@ print('')
 
 UID = raw_input('To start, please enter your initials: ')
 
+print('')
+print('Got it, ' + UID + '. Now, please select a label file to verify (csv).')
+print('')
+time.sleep(1)
+
+root = Tk()
+LAB_FILE = tkFileDialog.askopenfilename(initialdir = "/",title = "Select label file (wav)",filetypes = (("csv files","*.csv"),("all files","*.*")))
+print('Label file selected:')
+print(LAB_FILE)
+print('')
+
+print('Now please select the corresponding audio file (wav).')
+time.sleep(1)
+
+AUD_FILE = tkFileDialog.askopenfilename(initialdir = "/",title = "Select audio file (csv)",filetypes = (("wav files","*.wav"),("all files","*.*")))
+print('Audio file selected:')
+print (AUD_FILE)
+print('')
+root.quit()
+
+time.sleep(1)
+
 
 if get_user_input:
 
@@ -240,8 +262,10 @@ if get_user_input:
         LAB_FILE = raw_input('File not found. Please enter the full path to the label (.csv) file: ')
 
 VER_FILE = LAB_FILE[0:(len(LAB_FILE)-4)] + '_verify_posonly_' + UID + '.csv'
+leftoff = 'n'
 while os.path.isfile(VER_FILE):
-    leftoff = raw_input('A verification file with name '+ VER_FILE + 'already exists. Start where you left off? (y/n ) ')
+    print('A verification file with name '+ VER_FILE + 'already exists.')
+    leftoff = raw_input('Start where you left off? (y/n ) ')
     if leftoff == 'y':
         labels = pandas.read_csv(VER_FILE,delimiter=',')
         if(np.sum(labels['verif']==-1)==0):
@@ -255,6 +279,7 @@ while os.path.isfile(VER_FILE):
         results = labels['verif']
         results[idxs_curr] = 0
         print('Starting at index ' + str(np.min(idxs_curr)) + ' of ' + str(tot_labels))
+        print('')
         break
     elif leftoff == 'n':
         overw = raw_input('Would you like to overwrite the existing file? (y/n) ')
@@ -262,8 +287,10 @@ while os.path.isfile(VER_FILE):
             break
         else:
             VER_FILE = raw_input('Please enter an alternative path for the verification file: ')
-            
-print('Verification file will be saved at: ' + VER_FILE)
+print('')            
+print('Verification file will be saved at: ')
+print(VER_FILE)
+print('')
 
 if not(leftoff=='y'):
     labels = pandas.read_csv(LAB_FILE,delimiter='\t')
@@ -282,7 +309,7 @@ ready = 'n'
 while not(ready=='y'):
     ready = raw_input('Found ' + str(tot_labels) + ' detections - ready to go? (y/n) ')
 
-
+print('')
 pygame.mixer.pre_init(frequency=8000, size=-16, channels=2, buffer=4096)
 
 # Initialize pygame
@@ -295,7 +322,7 @@ grid = init_grid(NROW,NCOL)
 screen = pygame.display.set_mode(WINDOW_SIZE)
  
 # Set title of screen
-pygame.display.set_caption("Verifying - ?% complete")
+pygame.display.set_caption("Verifying")
 
 
 # Loop until the user clicks the close button.
@@ -319,7 +346,6 @@ while not done:
             #get index in current_idxs list
             result_idx = column*NROW+row
             mods = pygame.key.get_mods()
-            print(mods)
             if mods == 1: #shift = red = not a call
                 grid[row][column] = 1
                 results[idxs_curr[result_idx]] = 1

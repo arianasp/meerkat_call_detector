@@ -38,6 +38,7 @@ for i in range(NBINS):
 bins.append(1)
 
 bins = np.asarray(bins)
+bins = np.flip(bins)
 
 NBINS = len(bins)
 
@@ -45,13 +46,13 @@ probs_upper = np.zeros((NBINS-1))
 probs_lower = np.zeros((NBINS-1))
 nsamps = np.zeros((NBINS-1))
 for i in range(NBINS-1):
-    ncalls = sum((call_scores > bins[i]) & (call_scores <= bins[i+1]))
-    nnoise = sum((noise_scores > bins[i]) & (noise_scores <= bins[i+1]))
-    nmisalign = sum((misalign_scores > bins[i]) & (misalign_scores <= bins[i+1]))
-    nsync = sum((sync_scores > bins[i]) & (sync_scores <= bins[i+1]))
-    nunk = sum((unk_scores > bins[i]) & (unk_scores <= bins[i+1]))
+    ncalls = sum((call_scores >= bins[i]))
+    nnoise = sum((noise_scores >= bins[i]))
+    nmisalign = sum((misalign_scores >= bins[i]))
+    nsync = sum((sync_scores >= bins[i]))
+    nunk = sum((unk_scores >= bins[i]))
 
-    nscores = sum((scores > bins[i]) & (scores <= bins[i+1]))
+    nscores = float(sum((scores >= bins[i])))/len(scores)*100
 
     if(nscores > 0):
         probs_upper[i] = float(ncalls + nmisalign + nunk) / (ncalls + nnoise + nmisalign + nsync + nunk)
@@ -70,14 +71,15 @@ plt.subplot(211)
 plt.plot(range(NBINS-1),probs_upper,range(NBINS-1),probs_lower,marker='.')
 plt.grid(True)
 plt.xticks(range(NBINS-1),bins)
-plt.xlabel('Score bin')
-plt.ylabel('Prob detection is call')
+plt.xlabel('Threshold')
+plt.ylabel('Precision')
 plt.subplot(212)
 plt.plot(range(NBINS-1),nsamps,marker='.')
 plt.grid(True)
-plt.xlabel('Score bin')
-plt.ylabel('Number of detections')
-plt.yscale('log')
+plt.xlabel('Threshold')
+plt.xticks(range(NBINS-1),bins)
+plt.ylabel('% of detections')
+plt.ylim((0,100))
 plt.show()
 
 print(probs_upper)
