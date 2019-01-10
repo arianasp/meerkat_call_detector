@@ -371,7 +371,7 @@ while not done:
                     if np.max(idxs_curr) < tot_labels:
                         idxs_curr = [x+N_LABS for x in idxs_curr]
                         if(np.max(idxs_curr) >= tot_labels):
-                            if(np.min(idxs_curr) == tot_labels):
+                            if(np.min(idxs_curr) == tot_abels):
                                 done = True
                                 break
                             else:
