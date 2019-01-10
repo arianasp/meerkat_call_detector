@@ -250,7 +250,10 @@ def generate_batch(batch_size,clips_dir,augment,call_types = ['cc','sn','ld','mo
                 else:
                     X, y = generate_sample_call(files,clips_dir,call_types[idx],mel=mel)
             else:
-                X, y = generate_sample_call(files,clips_dir,call_type=None,mel=mel)
+                if(augment):
+                    X, y = generate_sample_call_augment(files,clips_dir,call_type=None,mel=mel)
+                else:
+                    X, y = generate_sample_call(files,clips_dir,call_type=None,mel=mel)
         if(cnn_dim == 2):
             X = X.reshape((X.shape[0],X.shape[1],1))
             y = y.reshape((y.shape[0],y.shape[1],1))
@@ -642,6 +645,7 @@ def precision_recall(groundtruth_calls,predicted_calls,call_types):
 
 def get_ground_truth_labels(wav_name,ground_truth_dir):
     ground_truth_path = ground_truth_dir + '/' + wav_name[0:(len(wav_name)-4)] + '.csv'
+    ground_truth_path = ground_truth_path.replace('_downsamp','')
     if(os.path.isfile(ground_truth_path)):
         pass
     else:
