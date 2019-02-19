@@ -70,7 +70,7 @@ class EvaluationOutput:
 #------------------------------ FUNCTIONS ------------------------------
 
 #TRAINING
-def generate_sample_call(files, clips_dir, call_type = None,mel=False):
+def generate_sample_call(files, clips_dir, call_type = None):
 
     #hard coded parameters for now
     samprate=8000
@@ -98,11 +98,7 @@ def generate_sample_call(files, clips_dir, call_type = None,mel=False):
         offset = samprate
 
     _,_,spec = spy.spectrogram(aud[(offset-pad_len):(offset+4096+pad_len)],fs=samprate,nperseg=255,noverlap=254,window='hanning')
-    if(mel):
-        melspec = librosa.feature.melspectrogram(S=spec,fmax=samprate/2,sr=samprate)
-        spec_norm = librosa.power_to_db(melspec,amin=1e-20)
-    else:
-        spec_norm = np.log(spec)
+    spec_norm = np.log(spec)
     #spec_norm = spec_norm - np.min(spec_norm) / (np.max(spec_norm) - np.min(spec_norm))
     dim_spec = spec.shape[1]
     dim_wav = aud.shape[0]
@@ -119,7 +115,7 @@ def generate_sample_call(files, clips_dir, call_type = None,mel=False):
     y = skimage.measure.block_reduce(y, (8,1), np.max)
     return X, y
 
-def generate_sample_call_augment(files, clips_dir, call_type = None,mel=False):
+def generate_sample_call_augment(files, clips_dir, call_type = None):
 
     #hard coded parameters for now
     samprate=8000
@@ -167,11 +163,7 @@ def generate_sample_call_augment(files, clips_dir, call_type = None,mel=False):
     aud_sub = aud_sub + aud_sub_noise
 
     _,_,spec = spy.spectrogram(aud_sub,fs=samprate,nperseg=255,noverlap=254,window='hanning')
-    if(mel):
-        melspec = librosa.feature.melspectrogram(S=spec,fmax=samprate/2,sr=samprate)
-        spec_norm = librosa.power_to_db(melspec,amin=1e-20)
-    else:
-        spec_norm = np.log(spec)
+    spec_norm = np.log(spec)
     #spec_norm = spec_norm - np.min(spec_norm) / (np.max(spec_norm) - np.min(spec_norm))
     dim_spec = spec.shape[1]
     dim_wav = aud.shape[0]
@@ -189,7 +181,7 @@ def generate_sample_call_augment(files, clips_dir, call_type = None,mel=False):
     
     return X, y, aud_sub, aud_sub_noise
 
-def generate_sample_noise(files,clips_dir,mel=False):
+def generate_sample_noise(files,clips_dir):
 
     #hard coded parameters for now
     samprate=8000
@@ -210,11 +202,7 @@ def generate_sample_noise(files,clips_dir,mel=False):
     len_call = len(aud) - samprate*2
     offset = 300
     _,_,spec = spy.spectrogram(aud[(offset-pad_len):(offset+4096+pad_len)],fs=samprate,nperseg=255,noverlap=254,window='hanning')
-    if(mel):
-        melspec = librosa.feature.melspectrogram(S=spec,fmax=samprate/2,sr=samprate)
-        spec_norm = librosa.power_to_db(melspec,amin=1e-20)
-    else:
-        spec_norm = np.log(spec)
+    spec_norm = np.log(spec)
     #spec_norm = spec_norm - np.min(spec_norm) / (np.max(spec_norm) - np.min(spec_norm))
     dim_spec = spec.shape[1]
     dim_wav = aud.shape[0]
@@ -231,7 +219,7 @@ def generate_sample_noise(files,clips_dir,mel=False):
     y = skimage.measure.block_reduce(y, (8,1), np.max)
     return X, y
 
-def generate_batch(batch_size,clips_dir,augment,call_types = ['cc','sn','ld','mov','agg','alarm','soc','hyb','unk','oth'],call_probs = None, p_noise = 0.5, cnn_dim = 1,mel=False):
+def generate_batch(batch_size,clips_dir,augment,call_types = ['cc','sn','ld','mov','agg','alarm','soc','hyb','unk','oth'],call_probs = None, p_noise = 0.5, cnn_dim = 1):
     files = os.listdir(clips_dir)
     X_list = []
     y_list = []
@@ -240,20 +228,20 @@ def generate_batch(batch_size,clips_dir,augment,call_types = ['cc','sn','ld','mo
         call_cumprobs = np.cumsum(call_probs)
     for idx in range(batch_size):
         if(np.random.rand(1)<=p_noise):
-            X, y = generate_sample_noise(files, clips_dir,mel=mel) 
+            X, y = generate_sample_noise(files, clips_dir) 
         else:
             if call_probs is not None:
                 r = np.random.random(1)
                 idx = np.where(call_cumprobs > r)[0][0]
                 if(augment):
-                    X, y = generate_sample_call_augment(files,clips_dir,call_types[idx],mel=mel) 
+                    X, y = generate_sample_call_augment(files,clips_dir,call_types[idx]) 
                 else:
-                    X, y = generate_sample_call(files,clips_dir,call_types[idx],mel=mel)
+                    X, y = generate_sample_call(files,clips_dir,call_types[idx])
             else:
                 if(augment):
-                    X, y = generate_sample_call_augment(files,clips_dir,call_type=None,mel=mel)
+                    X, y = generate_sample_call_augment(files,clips_dir,call_type=None)
                 else:
-                    X, y = generate_sample_call(files,clips_dir,call_type=None,mel=mel)
+                    X, y = generate_sample_call(files,clips_dir,call_type=None)
         if(cnn_dim == 2):
             X = X.reshape((X.shape[0],X.shape[1],1))
             y = y.reshape((y.shape[0],y.shape[1],1))
@@ -264,9 +252,9 @@ def generate_batch(batch_size,clips_dir,augment,call_types = ['cc','sn','ld','mo
     return (X, y)
  
 #Data generators 
-def data_generator(clips_dir,batch_size=10,augment=False,call_types = ['cc','sn','ld','mov','agg','alarm','soc','hyb','unk','oth'],call_probs = None,p_noise = 0.5, cnn_dim = 1, mel=False):
+def data_generator(clips_dir,batch_size=10,augment=False,call_types = ['cc','sn','ld','mov','agg','alarm','soc','hyb','unk','oth'],call_probs = None,p_noise = 0.5, cnn_dim = 2):
     while True:
-        yield generate_batch(batch_size,clips_dir,augment,call_types,call_probs,p_noise,cnn_dim,mel)
+        yield generate_batch(batch_size,clips_dir,augment,call_types,call_probs,p_noise,cnn_dim)
 
         
  #MODEL CONSTRUCTION
@@ -379,17 +367,12 @@ def construct_unet_model_2d():
 #  pad: padding on either side (in spectrogram generation) - defaults to 256
 #OUTPUTS:
 #  X: a properly formatted spectrogram image for input into the CNN (original size = 4096 samples, spec size = 512 x 128)
-def generate_cnn_input(wav_data,samprate=8000,pad=256,mel=False, cnn_dim = 2):
+def generate_cnn_input(wav_data,samprate=8000,pad=256, cnn_dim = 2):
 
   #wav_data = np.multiply(wav_data,2**16) #NOTE: this might need to be changed if file i/o changes!
 
   #create spectrogram, normalize, and crop
   _,_,spec = spy.spectrogram(wav_data,fs=samprate,nperseg=255,noverlap=254,window='hanning')
-  if(mel):
-    melspec = librosa.feature.melspectrogram(S=spec,fmax=samprate/2,sr=samprate)
-    spec_norm = librosa.power_to_db(melspec,amin=1e-20)
-  else:
-    spec_norm = np.log(spec)
   #spec_norm = spec_norm - np.min(spec_norm) / (np.max(spec_norm) - np.min(spec_norm))
   dim_spec = spec.shape[1]
   dim_wav = wav_data.shape[0]
@@ -407,7 +390,7 @@ def generate_cnn_input(wav_data,samprate=8000,pad=256,mel=False, cnn_dim = 2):
   #return sample
   return X
 
-def extract_scores(model, extraction_params,mel=False, cnn_dim=2):
+def extract_scores(model, extraction_params, cnn_dim=2):
   print('-------Running CNN model on new data-------')
   print('model_path: '+ str(extraction_params.model_path))
   print('wav_path: ' + str(extraction_params.wav_path))
@@ -447,7 +430,7 @@ def extract_scores(model, extraction_params,mel=False, cnn_dim=2):
     wav_data = curr_wav[t0_within_chunk:tf_within_chunk]
 
     #Generate a properly formatted sample (for now 512 x 128 size)
-    X = generate_cnn_input(wav_data,pad=extraction_params.pad,samprate=extraction_params.samprate,mel=mel)
+    X = generate_cnn_input(wav_data,pad=extraction_params.pad,samprate=extraction_params.samprate)
 
     #Run prediction model and save to results matrix
     result = model.predict(X[None,...])
