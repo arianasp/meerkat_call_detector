@@ -61,8 +61,10 @@ class EvaluationOutput:
 #------------------------------ FUNCTIONS ------------------------------
 
 #TRAINING
-def generate_sample_call(files, clips_dir, call_type = None):
+def generate_sample_call(files, clips_dir, call_type = None, verbose=False):
 
+    if(verbose):
+        print('generating call noaug')
     #hard coded parameters for now
     samprate=8000
     pad_len = 127
@@ -77,6 +79,9 @@ def generate_sample_call(files, clips_dir, call_type = None):
     #get audio file and mask file
     aud_file = files[idx]
     mask_file = aud_file[0:(len(aud_file) - 7)] + 'mask.npy'
+    
+    if(verbose):
+        print(aud_file)
 
     #read in both files
     aud = np.load(clips_dir + '/' + aud_file)
@@ -105,8 +110,10 @@ def generate_sample_call(files, clips_dir, call_type = None):
     y = skimage.measure.block_reduce(y, (8,1), np.max)
     return X, y
 
-def generate_sample_call_augment(files, clips_dir, call_type = None):
+def generate_sample_call_augment(files, clips_dir, call_type = None, verbose=False):
 
+    if(verbose):
+        print('generating call augmented')
     #hard coded parameters for now
     samprate=8000
     pad_len = 127
@@ -121,6 +128,9 @@ def generate_sample_call_augment(files, clips_dir, call_type = None):
     #get audio file and mask file
     aud_file = files[idx]
     mask_file = aud_file[0:(len(aud_file) - 7)] + 'mask.npy'
+    
+    if(verbose):
+        print(aud_file)
 
     #read in both files
     aud = np.load(clips_dir + '/' + aud_file)
@@ -170,8 +180,9 @@ def generate_sample_call_augment(files, clips_dir, call_type = None):
     
     return X, y, aud_sub, aud_sub_noise
 
-def generate_sample_noise(files,clips_dir):
-
+def generate_sample_noise(files,clips_dir, verbose=False):
+    if(verbose):
+        print('generating noise')
     #hard coded parameters for now
     samprate=8000
     pad_len = 127
@@ -183,6 +194,9 @@ def generate_sample_noise(files,clips_dir):
     #get audio file and mask file
     aud_file = files[idx]
     mask_file = aud_file[0:(len(aud_file) - 7)] + 'mask.npy'
+    
+    if(verbose):
+        print(aud_file)
 
     #read in both files
     aud = np.load(clips_dir + '/' + aud_file)
@@ -207,7 +221,7 @@ def generate_sample_noise(files,clips_dir):
     y = skimage.measure.block_reduce(y, (8,1), np.max)
     return X, y
 
-def generate_batch(batch_size,clips_dir,augment,call_types = ['cc','sn','ld','mov','agg','alarm','soc','hyb','unk','oth'],call_probs = None, p_noise = 0.5, cnn_dim = 1):
+def generate_batch(batch_size,clips_dir,augment,call_types = ['cc','sn','ld','mov','agg','alarm','soc','hyb','unk','oth'],call_probs = None, p_noise = 0.5, cnn_dim = 2, verbose=False):
     files = os.listdir(clips_dir)
     X_list = []
     y_list = []
@@ -216,20 +230,20 @@ def generate_batch(batch_size,clips_dir,augment,call_types = ['cc','sn','ld','mo
         call_cumprobs = np.cumsum(call_probs)
     for idx in range(batch_size):
         if(np.random.rand(1)<=p_noise):
-            X, y = generate_sample_noise(files, clips_dir) 
+            X, y = generate_sample_noise(files, clips_dir,verbose=verbose) 
         else:
             if call_probs is not None:
                 r = np.random.random(1)
                 idx = np.where(call_cumprobs > r)[0][0]
                 if(augment):
-                    X, y = generate_sample_call_augment(files,clips_dir,call_types[idx]) 
+                    X, y, asub, asubn = generate_sample_call_augment(files,clips_dir,call_types[idx],verbose=verbose) 
                 else:
-                    X, y = generate_sample_call(files,clips_dir,call_types[idx])
+                    X, y = generate_sample_call(files,clips_dir,call_types[idx],verbose=verbose)
             else:
                 if(augment):
-                    X, y = generate_sample_call_augment(files,clips_dir,call_type=None)
+                    X, y, asub, asubn = generate_sample_call_augment(files,clips_dir,call_type=None,verbose=verbose)
                 else:
-                    X, y = generate_sample_call(files,clips_dir,call_type=None)
+                    X, y = generate_sample_call(files,clips_dir,call_type=None,verbose=verbose)
         if(cnn_dim == 2):
             X = X.reshape((X.shape[0],X.shape[1],1))
             y = y.reshape((y.shape[0],y.shape[1],1))
@@ -240,9 +254,9 @@ def generate_batch(batch_size,clips_dir,augment,call_types = ['cc','sn','ld','mo
     return (X, y)
  
 #Data generators 
-def data_generator(clips_dir,batch_size=10,augment=False,call_types = ['cc','sn','ld','mov','agg','alarm','soc','hyb','unk','oth'],call_probs = None,p_noise = 0.5, cnn_dim = 2):
+def data_generator(clips_dir,batch_size=10,augment=False,call_types = ['cc','sn','ld','mov','agg','alarm','soc','hyb','unk','oth'],call_probs = None,p_noise = 0.5, cnn_dim = 2, verbose=False):
     while True:
-        yield generate_batch(batch_size,clips_dir,augment,call_types,call_probs,p_noise,cnn_dim)
+        yield generate_batch(batch_size,clips_dir,augment,call_types,call_probs,p_noise,cnn_dim,verbose=verbose)
 
         
  #MODEL CONSTRUCTION
@@ -267,7 +281,7 @@ def conv_upsample(inputs, residual, filters):
 
     return conv
 
-def construct_unet_model():
+def construct_unet_model(lr = 2.5e-4):
     #input_layer = Input(batch_shape=(None,None,None))
     input_layer = Input(batch_shape=(None,512,128))
     conv = conv_pool(input_layer, 32)
@@ -291,7 +305,7 @@ def construct_unet_model():
     model = Model(input_layer, conv)
 
     #change optimizer to ADAM?
-    model.compile(RMSprop(lr=2.5e-4), loss='binary_crossentropy')
+    model.compile(RMSprop(lr=lr), loss='binary_crossentropy')
   
     return model
 
@@ -315,7 +329,7 @@ def conv_upsample_2d(inputs, residual, filters):
 
     return conv
 
-def construct_unet_model_2d():
+def construct_unet_model_2d(lr = 2.5e-4):
     input_layer = Input(batch_shape=(None,512,128,1))
     conv = conv_pool_2d(input_layer, 32)
     res1 = conv
@@ -342,7 +356,7 @@ def construct_unet_model_2d():
 
 
     model = Model(input_layer, probs)
-    model.compile(RMSprop(lr=2.5e-4), loss='binary_crossentropy')
+    model.compile(RMSprop(lr=lr), loss='binary_crossentropy')
   
     return model
 
