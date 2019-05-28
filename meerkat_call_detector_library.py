@@ -13,7 +13,7 @@ import os
 import pickle
 import glob
 from keras.models import Model
-from keras.layers import Conv1D, Conv2D, AveragePooling1D, AveragePooling2D, MaxPooling1D, MaxPooling2D, Activation, Input, Add, UpSampling1D, UpSampling2D, Concatenate, BatchNormalization
+from keras.layers import Conv1D, Conv2D, AveragePooling1D, AveragePooling2D, MaxPooling1D, MaxPooling2D, Activation, Input, Add, UpSampling1D, UpSampling2D, Concatenate, BatchNormalization, GlobalAveragePooling2D, Dense
 from keras.optimizers import RMSprop
 from keras.models import load_model
 from keras.callbacks import History
@@ -655,14 +655,43 @@ def get_ground_truth_labels(wav_name,ground_truth_dir):
         
         return labels
     
-def get_start_end_time_labels(labels):
+def get_ground_truth_labels_megan(wav_name, ground_truth_path):
+    filename = wav_name[0:(len(wav_name)-3)] + 'txt'
+
+    #if ground truth file exists, read it in, otherwise return None
+    if(not(os.path.isfile(ground_truth_path))): 
+        print('no path to ground truth file found')
+        return None
+    else:
+        #Read in ground truth labels for the current file
+        labels = pandas.read_csv(ground_truth_path,delimiter=',')
+        labels = labels[labels['filename']==filename]
+        labels = labels[(labels['type']=='start') | (labels['type']=='end') | (labels['iscall']==True)]
+
+        labels['label_type'] = labels['type']
+        labels['label_type'][labels['iscall']==True] = 'call'
+        labels['start_time'] = labels['t0']
+        labels['end_time'] = labels['tf']
+        labels['duration'] = labels['end_time'] - labels['start_time']
+        labels['call_type'] = labels['type']
+        labels['focal'] = 'foc'
+        
+    return labels
+    
+    
+def get_start_end_time_labels(labels, focal_megan = False):
     #Only include detections and labels where the detection / labeling times overlap
-    start_time_labels = labels[labels['Name'] == 'START']['start_time'].values[0]
-    end_time_labels = labels[labels['Name'] == 'END']['start_time'].values[0]
+    
+    if(focal_megan):
+        start_time_labels = np.min(labels['start_time'])
+        end_time_labels = np.max(labels['end_time'])
+    else:
+        start_time_labels = labels[labels['Name'] == 'START']['start_time'].values[0]
+        end_time_labels = labels[labels['Name'] == 'END']['start_time'].values[0]
     
     return (start_time_labels, end_time_labels)      
 
-def run_evaluation(pckl_path, thresh_range, save_dir, ground_truth_dir,call_types,boundary_thresh = 0.6, verbose = True, savename = None):
+def run_evaluation(pckl_path, thresh_range, save_dir, ground_truth_dir,call_types,boundary_thresh = 0.6, verbose = True, savename = None, ground_truth_path = None, foc_megan = False):
     
     if(not(os.path.isfile(pckl_path))):
         print('pckl path does not exist')
@@ -687,7 +716,12 @@ def run_evaluation(pckl_path, thresh_range, save_dir, ground_truth_dir,call_type
     else:
         
         #Read in ground truth labels and convert to seconds
-        labels = get_ground_truth_labels(wav_name=wav_name,ground_truth_dir=ground_truth_dir)
+        if foc_megan:
+            labels = get_ground_truth_labels_megan(wav_name=wav_name,ground_truth_path=ground_truth_path)
+        else:
+            labels = get_ground_truth_labels(wav_name=wav_name,ground_truth_dir=ground_truth_dir)
+        
+        print(labels)
         
         #if ground truth data is not available, print this and end
         if labels is None:
@@ -697,7 +731,9 @@ def run_evaluation(pckl_path, thresh_range, save_dir, ground_truth_dir,call_type
         else:
 
             #Only include detections and labels where the detection / labeling times overlap
-            [start_time_labels, end_time_labels] = get_start_end_time_labels(labels)
+            [start_time_labels, end_time_labels] = get_start_end_time_labels(labels, focal_megan=foc_megan)
+            print(start_time_labels)
+            print(end_time_labels)
 
             t0_predictions = output.times[0]
             tf_predictions = output.times[len(output.times)-1]
@@ -707,6 +743,8 @@ def run_evaluation(pckl_path, thresh_range, save_dir, ground_truth_dir,call_type
 
             #Remove non-calls
             groundtruth_calls = labels.loc[(labels['label_type']=='call') & (labels['start_time'] >= t0_compare) & (labels['end_time'] < tf_compare)]
+            
+            print(groundtruth_calls)
 
             #set up numpy arrays to store results
             recalls_foc = np.zeros((len(thresh_range),len(call_types)))
@@ -754,6 +792,201 @@ def run_evaluation(pckl_path, thresh_range, save_dir, ground_truth_dir,call_type
             
             print('Evaluation completed and saved at ' + savename)
             return 0
+
+#FUNCTIONS FOR CLASSIFICATION
+#Funcs to generate data
+def generate_sample_call_for_classif(files, clips_dir, max_size = 512, call_type = 'cc', call_types = ['cc','sn','ld','mov','agg','alarm','soc','hyb','unk','oth'], verbose=False):
+
+    #hard coded parameters for now
+    samprate=8000
+    pad_len = 127
+
+    #get indexes to files of type call_type (or sample from all calls if call_type is None)
+    if(call_type is not None):
+        idxs = np.where([((call_type in s) & ('_aud' in s)) for s in files])[0]
+    else:
+        idxs = np.where(['_aud' in s for s in files])[0]
+    
+    len_call= 0
+    while(len_call < 240):
+        idx = np.random.choice(idxs)
+
+        #get audio file
+        aud_file = files[idx]
+    
+        #read in audio file
+        aud = np.load(clips_dir + '/' + aud_file)
+    
+        #get call length
+        len_call = len(aud) - samprate*2
+    
+    aud = aud[(samprate-pad_len):(samprate+pad_len + 4096)]
+    
+    #generate spectrogram
+    _,_,spec = spy.spectrogram(aud,fs=samprate,nperseg=255,noverlap=247,window='hanning')
+    #_,_,spec = spy.spectrogram(aud[(offset-pad_len):(offset+4096+pad_len)],fs=samprate,nperseg=255,noverlap=247,window='hanning')
+    spec_norm = np.log(spec)
+    
+    #pad with 0's where no call is
+    spec_norm[:,int(len_call/8000.*1000):spec_norm.shape[1]] = 0
+
+    #generate matrix for input to classifier
+    X = np.transpose(spec_norm)
+    
+    #call type as integer (index in call_types vector)
+    y = call_types.index(call_type)
+    
+    return X, y
+
+def generate_batch_for_classif(batch_size,clips_dir,call_types = ['cc','sn','ld','mov','agg','alarm','soc','hyb','unk','oth'],call_probs = None, verbose=False):
+    
+    #list files
+    files = os.listdir(clips_dir)
+    
+    #create empty lists to hold spectrograms (input) and call labels (output)
+    X_list = []
+    y_list = []
+    
+    #probability of drawing each call type can be specified or if not specified is assumed to be uniform across all call types
+    if(call_probs is not None):
+        call_cumprobs = np.cumsum(call_probs)
+    else:
+        ncalls = len(call_types)
+        call_cumprobs = np.arange(0,1,step=1./ncalls)+1./ncalls #equally spaced bins for drawing probabilities
+        
+    #generate samples
+    for idx in range(batch_size):
+        
+        #select call type
+        r = np.random.random(1)
+        idx = np.where(call_cumprobs > r)[0][0]
+        call_type = call_types[idx]
+        X, y = generate_sample_call_for_classif(files=files, clips_dir=clips_dir, call_type=call_type, call_types=call_types, verbose=verbose)
+        
+        #reshape for 2d conv
+        X = X.reshape((X.shape[0],X.shape[1],1))
+        #y = y.reshape((y.shape[0],y.shape[1],1))
+        
+        #append to list
+        X_list.append(X)
+        y_list.append(y)
+    
+    #convert to stack
+    X = np.stack(X_list)
+    y = np.stack(y_list)
+    return (X, y)
+
+#Data generators 
+def data_generator_for_classif(clips_dir,batch_size=10,call_types = ['cc','sn','ld','mov','agg','alarm','soc','hyb','unk','oth'],call_probs = [1./7,1./7,1./7,1./7,1./7,1./7,1./7,0,0,0],verbose=False):
+    while True:
+        yield generate_batch_for_classif(batch_size,clips_dir,call_types,call_probs,verbose=verbose)
+
+def classifier_model(n_classes=10):
+    inputs = Input(shape=(None, None,1))
+    x = inputs
+    x = Conv2D(32, (3, 3), activation='relu')(x)
+    x = MaxPooling2D()(x)
+
+    x = Conv2D(32, (3, 3), activation='relu')(x)
+    x = MaxPooling2D()(x)
+
+    x = Conv2D(64, (3, 3), activation='relu')(x)
+    x = MaxPooling2D()(x)
+
+    # this converts feature maps to 1D feature vectors by taking the channelwise average
+    # Also see GlobalMaxPooling2D and Flatten layers, which also transform to 1D vectors
+    # GlobalAveragePooling2D has some nice properties in terms of model regularization,
+    # which typically makes it the best choice for this transformation
+    x = GlobalAveragePooling2D()(x)  
+    x = Dense(64, activation='relu')(x)
+
+    class_probabilites = Dense(n_classes, activation='softmax')(x)
+
+    model = Model(inputs=inputs, outputs=class_probabilites)
+    
+    return(model)
+
+#read in labels from Audition format file and pre-process
+def read_labels_for_classif(test_csv):
+    labels = pandas.read_csv(test_csv,delimiter='\t')
+    labels['t0'] = [hms_to_seconds(x) for x in labels['Start']]
+    labels['dur'] = [hms_to_seconds(x) for x in labels['Duration']]
+    labels['tf'] = labels['t0'] + labels['dur']
+    labels['label_type'] = [label_type(x) for x in labels['Name']]
+    labels['call_type'] = [call_type_simple(x) for x in labels['Name']]
+    labels['caller'] = [caller(x) for x in labels['Name']]
+    foc = labels['caller'] == 'foc'
+    call = labels['label_type'] == 'call'
+    labels['classify'] = foc & call
+    
+    return labels
+
+def generate_test_data_for_classif(labels,test_wav,pad_len=127, samprate=8000,win_len=4096,call_types=['cc','sn','ld','mov','agg','alarm','soc','hyb','unk','oth'],verbose=True):
+    #create empty lists to hold spectrograms (input) and call labels (output)
+    X_list = []
+    y_list = []
+
+    if(verbose):
+        print('generating spectrograms for testing')
+    
+    #generate stack of data
+    for i in range(len(labels['Name'])):
+
+        #extract audio
+        if(labels['classify'][i] == True):
+            t0 = labels['t0'][i]
+            dur = labels['dur'][i]
+            real = labels['call_type'][i]
+            aud, _ = librosa.core.load(path=test_wav,offset=t0-float(pad_len)/samprate,duration=float(win_len+2*pad_len)/samprate,sr=samprate)
+
+            #convert to spectrogram
+            _,_,spec = spy.spectrogram(aud,fs=samprate,nperseg=255,noverlap=247,window='hanning')
+            spec_norm = np.log(spec)
+
+            #pad with 0's where no call is
+            spec_norm[:,int(dur*1000):spec_norm.shape[1]] = 0
+
+            #generate matrix for input to classifier
+            X = np.transpose(spec_norm)
+            X = X.reshape((X.shape[0],X.shape[1],1))
+            X_list.append(X)
+
+            #call type as integer (index in call_types vector)
+            y = labels['call_type'][i]
+            y = call_types.index(y)
+            y_list.append(y)
+
+    #convert to stacks
+    X = np.stack(X_list)
+    y = np.stack(y_list)
+    
+    return(X,y)
+
+def evaluate_classif(model,X,y,call_types):
+    out = model.predict(X)
+    preds = np.zeros(out.shape[0],dtype='int')
+    for i in range(out.shape[0]):
+        preds[i] = int(np.argmax(out[i,:]))
+    match = preds == y
+
+    confusion = np.zeros((len(call_types),len(call_types)))
+    for i in range(confusion.shape[0]):
+        for j in range(confusion.shape[1]):
+            confusion[i,j] = np.sum((y == i) & (preds == j))
+    
+    return(confusion)
+
+def plot_confusion_matrix(confusion,call_types,logscale=True):
+    fig = plt.figure()
+    plt.xticks(np.arange(start=0,stop=len(call_types)),call_types,rotation='vertical')
+    plt.yticks(np.arange(start=0,stop=len(call_types)),call_types)
+    plt.ylabel('real')
+    plt.xlabel('predicted')
+    plt.imshow(confusion)
+    for i in range(confusion.shape[0]):
+        for j in range(confusion.shape[1]):
+            plt.annotate(text = str(int(confusion[i,j])), xy=(j, i), ha='center',va='center',color='red')
+    return(fig)
 
 #MISC FUNCS
 #Convert HMS format times to seconds
