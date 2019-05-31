@@ -1,9 +1,9 @@
-#LIBRARY OF FUNCTIONS, CLASSES, ETC FOR MEERKAT CALL DETECTOR
+#LIBRARY OF FUNCTIONS, CLASSES, ETC FOR MEERKAT CALL DETECTOR AND CLASSIFIER
 
 #Import stuff
 
 from scipy.io import wavfile
-from sklearn.preprocessing import MinMaxScaler
+from sklearn.preprocessing import MinMaxScaler, normalize
 import matplotlib.pyplot as plt
 import numpy as np
 import skimage.measure
@@ -61,10 +61,29 @@ class EvaluationOutput:
 #------------------------------ FUNCTIONS ------------------------------
 
 #TRAINING
+
 def generate_sample_call(files, clips_dir, call_type = None, verbose=False):
+    
+    """Generate a sample call and label from a list of files in a directory. For detection step.
+    
+    Parameters:
+    files (list of strings): list of filenames of audio clips (name only, not path)
+    clips_dir (string): directory where clips are stored
+    call_type (string): string decribing the call type to select 
+        default = None will select a call uniformly at random from the files list
+    verbose (bool): whether to print statements about progress
+        default = False
+        
+    Returns:
+    X (512 x 128 np matrix float): spectrogram image of call, size currently hard-coded
+    y (len 512 np array): vector of 1's and 0's where 1's are placed where calls are. For now dimensions hardcoded to 512, with each "pixel" being 1 ms
+    
+    """
+    
 
     if(verbose):
         print('generating call noaug')
+        
     #hard coded parameters for now
     samprate=8000
     pad_len = 127
@@ -112,6 +131,24 @@ def generate_sample_call(files, clips_dir, call_type = None, verbose=False):
 
 def generate_sample_call_augment(files, clips_dir, call_type = None, verbose=False):
 
+    """Generate a sample call and label from a list of files in a directory. Perform basic augemntation by adding noise from another section of the recording (currently drawn from beginning of another clip file, excluding instances where calls are in the selected region). The fraction noise vs call is currently selected uniformly at random from the interval [0,1]. For detection step.
+    
+    Parameters:
+    files (list of strings): list of filenames of audio clips (name only, not path)
+    clips_dir (string): directory where clips are stored
+    call_type (string): string decribing the call type to select 
+        default = None will select a call uniformly at random from the files list
+    verbose (bool): whether to print statements about progress
+        default = False
+        
+    Returns:
+    X (512 x 128 np matrix float): spectrogram image of call, size currently hard-coded
+    y (len 512 np array): vector of 1's and 0's where 1's are placed where calls are. For now dimensions hardcoded to 512, with each "pixel" being 1 ms
+    aud_sub (len 4096 + pad_len*2 vector): augmented audio sequence
+    aud_sub_noise (len 4096 + pad_len*2 vector): noise used for augmentation
+    
+    """
+    
     if(verbose):
         print('generating call augmented')
     #hard coded parameters for now
@@ -164,7 +201,6 @@ def generate_sample_call_augment(files, clips_dir, call_type = None, verbose=Fal
 
     _,_,spec = spy.spectrogram(aud_sub,fs=samprate,nperseg=255,noverlap=247,window='hanning')
     spec_norm = np.log(spec)
-    #spec_norm = spec_norm - np.min(spec_norm) / (np.max(spec_norm) - np.min(spec_norm))
     dim_spec = spec.shape[1]
     dim_wav = aud.shape[0]
     t0_wav = samprate
@@ -181,6 +217,23 @@ def generate_sample_call_augment(files, clips_dir, call_type = None, verbose=Fal
     return X, y, aud_sub, aud_sub_noise
 
 def generate_sample_noise(files,clips_dir, verbose=False):
+    
+    """Generate a sample of noise and label from a list of files in a directory. Noise is currently sampled from the regions nearby regions to calls (i.e. from files that contain 1 sec + call + 1 sec). TODO: Possibly should change this later to sample from other file regions. For detection step.
+    
+    Parameters:
+    files (list of strings): list of filenames of audio clips (name only, not path)
+    clips_dir (string): directory where clips are stored
+    call_type (string): string decribing the call type to select 
+        default = None will select a call uniformly at random from the files list
+    verbose (bool): whether to print statements about progress
+        default = False
+        
+    Returns:
+    X (512 x 128 np matrix float): spectrogram image of call, size currently hard-coded
+    y (len 512 np array): vector of 1's and 0's where 1's are placed where calls are. For now dimensions hardcoded to 512, with each "pixel" being 1 ms
+    
+    """
+    
     if(verbose):
         print('generating noise')
     #hard coded parameters for now
@@ -221,7 +274,29 @@ def generate_sample_noise(files,clips_dir, verbose=False):
     y = skimage.measure.block_reduce(y, (8,1), np.max)
     return X, y
 
-def generate_batch(batch_size,clips_dir,augment,call_types = ['cc','sn','ld','mov','agg','alarm','soc','hyb','unk','oth'],call_probs = None, p_noise = 0.5, cnn_dim = 2, verbose=False):
+def generate_batch(batch_size,clips_dir,augment = False,call_types = ['cc','sn','ld','mov','agg','alarm','soc','hyb','unk','oth'],call_probs = None, p_noise = 0.5, cnn_dim = 2, verbose=False):
+    
+    """Generate a batch of sample calls and labels from audio clips in a directory. For detection step.
+    
+    Parameters:
+    batch_size (int): how many samples to generate
+    clips_dir (string): directory where clips are stored
+    augment (bool): whether to augment by adding noise to calls (defaults to False)
+    call_types (list of strings): list of call types. Defaults to meerkat call types: ['cc','sn','ld','mov','agg','alarm','soc','hyb','unk','oth']
+    call_probs (vector of floats, same length as call_types): sampling probabilities for the different call types
+        default = None: in this case call types will be sampled in proportion to their occurrence in clips_dir
+    p_noise (float): probability of drawing noise instead of a call 
+        default = 0.5
+    cnn_dim (int): CNN dimesnion (can be 1 or 2)
+        default = 2 for 2d convolutions (this works better)
+    verbose (bool): whether the print progress as function runs
+        
+    Returns:
+    X (batch_size x 512 x 128 x 1 np array of floats): batch of call and noise spectrograms (if cnn_dim == 1, last dimension will be removed)
+    y (batch_size x 512 x 1 np array): labels (if cnn_dim == 1, last dimension will be removed). vectors of 1's and 0's where 1's are placed where calls are. For now dimensions hardcoded to 512, with each "pixel" being 1 ms
+    
+    """
+    
     files = os.listdir(clips_dir)
     X_list = []
     y_list = []
@@ -255,6 +330,29 @@ def generate_batch(batch_size,clips_dir,augment,call_types = ['cc','sn','ld','mo
  
 #Data generators 
 def data_generator(clips_dir,batch_size=10,augment=False,call_types = ['cc','sn','ld','mov','agg','alarm','soc','hyb','unk','oth'],call_probs = None,p_noise = 0.5, cnn_dim = 2, verbose=False):
+    """Wrapper function to generate data in batches. For detection.
+    
+    Parameters:
+    clips_dir (str): path to directory where clips are stored
+    batch_size (int): how many samples per batch
+        default = 10
+    augment (bool): whether to perform augmentation
+        default = False
+    call_types (list of strings): list of call types
+        default = ['cc','sn','ld','mov','agg','alarm','soc','hyb','unk','oth']
+    call_probs (list of floats): probabilities of drawing each call types
+        default = None (calls will be drawn at random from the clips in clips_dir)
+    p_noise (float): probability of drawing noise
+        default = 0.5
+    cnn_dim (int): convolution dimension (1 or 2)
+        default = 2
+    verbose (bool): whether to print progress
+        default = False
+        
+    Returns:
+        a data generator from generate_batch
+    """
+    
     while True:
         yield generate_batch(batch_size,clips_dir,augment,call_types,call_probs,p_noise,cnn_dim,verbose=verbose)
 
@@ -282,6 +380,15 @@ def conv_upsample(inputs, residual, filters):
     return conv
 
 def construct_unet_model(lr = 2.5e-4):
+    """Construct a U-net model with 1D convolutions, for inputs sized 512 x 128
+    
+    Parameters:
+    lr (float): learning rate
+        default = 2.5e-4
+        
+    Returns:
+    model (a U-net model using 1D convoluutions, 5 layers)
+    """
     #input_layer = Input(batch_shape=(None,None,None))
     input_layer = Input(batch_shape=(None,512,128))
     conv = conv_pool(input_layer, 32)
@@ -330,6 +437,17 @@ def conv_upsample_2d(inputs, residual, filters):
     return conv
 
 def construct_unet_model_2d(lr = 2.5e-4):
+    """Construct a U-net model with 2D convolutions, for inputs sized 512 x 128
+    
+    Parameters:
+    lr (float): learning rate
+        default = 2.5e-4
+        
+    Returns:
+    model (a U-net model using 2D convoluutions, 5 layers)
+    """
+    
+    
     input_layer = Input(batch_shape=(None,512,128,1))
     conv = conv_pool_2d(input_layer, 32)
     res1 = conv
@@ -362,17 +480,22 @@ def construct_unet_model_2d(lr = 2.5e-4):
 
 #MODEL TESTING
 
-#Generate a spectrogram of the right size (512 x 128) to put into the neural net
-#INPUTS:
-#  wav_data: raw data from a wav file, read in using librosa
-#  samprate: default sample rate is 8000 Hz
-#  pad: padding on either side (in spectrogram generation) - defaults to 256
-#OUTPUTS:
-#  X: a properly formatted spectrogram image for input into the CNN (original size = 4096 samples, spec size = 512 x 128)
 def generate_cnn_input(wav_data,samprate=8000,pad=256, cnn_dim = 2):
 
-  #wav_data = np.multiply(wav_data,2**16) #NOTE: this might need to be changed if file i/o changes!
+  """Generate a spectrogram of the right size (512 x 128) to put into the neural net
+  Parameters:
+  wav_data (np 1d array): raw data from a wav file, read in using librosa
+  samprate (int): sample rate (Hz)
+      default = 8000
+  pad (int): padding on either side (in spectrogram generation)
+      default = 256
+  cnn_dim (int): conv net dimension (1 or 2)
+      default = 2
+  
+  Returns:
+  X (np array 512 x 128 x 1): a properly formatted spectrogram image for input into the CNN (note if cnn_dim == 1, last dim will be removed)
 
+  """
   #create spectrogram, normalize, and crop
   _,_,spec = spy.spectrogram(wav_data,fs=samprate,nperseg=255,noverlap=247,window='hanning')
   spec_norm = np.log(spec)
@@ -385,7 +508,7 @@ def generate_cnn_input(wav_data,samprate=8000,pad=256, cnn_dim = 2):
   tf_spec = pad/2/8 + 512 + 1
   X = np.transpose(spec_norm[:,int(t0_spec):int(tf_spec)])
 
-  #reduce resolution (note: this can definitely be made more efficient later!)
+  #add a dimension if doing 2d convolutions (these expect another dimension b/c images usually have 3 channels)
   if(cnn_dim==2):
     X = np.reshape(X,(X.shape[0],X.shape[1],1))
 
@@ -466,18 +589,21 @@ def extract_scores(model, extraction_params, cnn_dim=2):
 
   #Print final time
   print('Done')
+    
 def segment_calls(times,scores,min_thresh,boundary_thresh):
-    '''
-    Function to segment scores into calls using a double threshold method.
+    """Segment scores into calls using a double threshold method.
+    
     The function proceeds by finding instances in which the score exceeds one threshold (min_thresh). It then searches forward and backwards from these instances to find the boundaries of calls, defined as the nearest time (forward and back) when the score falls below a second threshold (boundary_thresh)
-    INPUTS:
-        times: vector holding times associated with scores
-        scores: vector of scores (0-1)
-        min_thresh: minimum threshold a region of scores must cross in order to be segmented into a call
-        boundary_thresh: threshold that scores must cross in order to segment into a separate call 
-    OUTPUTS:
-        calls: a n_calls x 2 numpy array with times of call beginnings and endings
-    '''
+    
+    Parameters:
+    times (1d np array of floats): vector holding times associated with scores
+    scores (1d np array of floats): vector of scores (0-1)
+    min_thresh (float): minimum threshold a region of scores must cross in order to be segmented into a call (upper threshold)
+    boundary_thresh (float): threshold that scores must cross in order to segment into a separate call (lower threshold)
+    
+    Returns:
+    calls (n_calls x 2 numpy array): holds times of call beginnings and endings
+    """
     #get boundaries so don't try to access out of bounds indexes
     min_idx = 0
     max_idx = len(scores)
@@ -499,8 +625,19 @@ def segment_calls(times,scores,min_thresh,boundary_thresh):
     calls = np.reshape(calls,(len(calls),2))
     return(calls)
 
-#Generate a csv file (formatted to be read into audition) with predicted calls and their scores
 def generate_call_labels_audition(calls,times,scores,csv_name):
+    """Generate a csv file (formatted to be read into audition) with predicted calls and their scores
+    
+    Parameters:
+    calls (n_calls x 2 numpy array): array of call beginning and end times
+    times (1d numpy array): vector of times for the audio file
+    scores (1d numpy array): scores between 0 and 1 for each time step (same length as times) 
+    csv_name (str): what to name the output csv (full path)
+    
+    Returns:
+    Nothing (saves output file to csv_name)
+    
+    """
     with open(csv_name, mode='w') as csv_file:
         writer = csv.writer(csv_file, delimiter='\t', quotechar='"', quoting=csv.QUOTE_MINIMAL)
         writer.writerow(['Name','Start','Duration','Time Format','Type','Description'])
@@ -516,6 +653,15 @@ def generate_call_labels_audition(calls,times,scores,csv_name):
 #EVALUATION FUNCS
 
 def label_type(label_str):
+  """Generate label type from label string
+  
+  Parameters:
+  label_str (str): label name
+  
+  Returns:
+  lab_type (str): label type (one of: 'synch', 'start', 'end', 'call')
+  
+  """
   if ((re.search('SYNC',label_str,re.IGNORECASE)!=None) | (re.search('BEEP',label_str,re.IGNORECASE)!=None) | (re.search('SYC',label_str,re.IGNORECASE)!=None)):
     lab_type = 'synch'
   elif ((re.search('STAR',label_str,re.IGNORECASE)!=None) | (re.search('SART',label_str,re.IGNORECASE)!=None)):
@@ -528,6 +674,15 @@ def label_type(label_str):
 
 #Call labels
 def call_type_simple(label_str):
+    
+  """Get simple call type from full label
+  Parameters: 
+  label_str (str): full name of label
+  
+  Returns
+  lab_type (str) simplified call label (one of 10 types: 'hyb','cc','mov','ld','soc','sn','unk','alarm','agg',oth')
+  
+  """
   if ((re.search('HYB',label_str,re.IGNORECASE)!=None)):
     lab_type = 'hyb'
   elif ((re.search('LEAD CC',label_str,re.IGNORECASE)!=None)):
@@ -553,6 +708,16 @@ def call_type_simple(label_str):
   return lab_type
 
 def caller(label_str):
+    
+  """Generate caller (focal or nonfocal) from call label
+  
+  Parameters: 
+  label_str (str): label name
+  
+  Returns:
+  lab_type: caller id (one of: 'foc','non','ambig')
+  
+  """
   if ((re.search('NONFOC',label_str,re.IGNORECASE)!=None)):
     lab_type = 'non'
   elif ((re.search('[*]',label_str,re.IGNORECASE)!=None)):
@@ -562,6 +727,25 @@ def caller(label_str):
   return lab_type
 
 def precision_recall(groundtruth_calls,predicted_calls,call_types):
+    
+    """Generate precision and recall from groundtruth data and predicted calls
+    
+    Parameters:
+    groundtruth_calls (pandas array): ground truth labels, generated from get_ground_truth_labels
+    predicted_calls (n_calls x 2 np array): beginning and end times of predicted calls
+    call_types (list of strings): call types to compute recalls for
+    
+    Returns:
+    recalls_foc (1d array of floats, same len as call_types): recall measure for each call type, focal calls only
+    recalls_non (1d array of floats, same len as call_types): recall measure for each call type, nonfoc calls only
+    precision (float): overall precision (probability that a detection overlaps with a call of any type)
+    tps_foc (1d array of floats, same len as call_types): true positives for each call type, for the focal
+    fns_foc (1d array of floats, same len as call_types): false negatives (missed calls) for each call type, for the focal
+    tps_non (1d array of floats, same len as call_types): true positives for each call type, for non-focal calls
+    fns_non (1d array of floats, same len as call_types): false negatives (missed calls) for each call type, for non-focal calls
+    fps (int): false positives (detected calls that are neither focal nor non-focal calls in the groundtruth data)
+    """
+    
     tps_foc = np.zeros((len(call_types))) #true positives, focal
     fns_foc = np.zeros((len(call_types))) #false negatives, focal
     tps_non = np.zeros((len(call_types))) #true positives, nonfocal
@@ -629,6 +813,16 @@ def precision_recall(groundtruth_calls,predicted_calls,call_types):
     return output
 
 def get_ground_truth_labels(wav_name,ground_truth_dir):
+    """Generate pandas data frame of ground truth labels associated with an audio file wav_name
+    
+    Parameters:
+    wav_name (str): name of wav file (not full path) for which a corresponding csv file of labels should be found
+    ground_truth_dir (str): directory where csv ground truth labels should be stored (Audition format)
+    
+    Returns:
+    labels (pandas data frame): data frame of ground truth labels
+    """
+    
     ground_truth_path = ground_truth_dir + '/' + wav_name[0:(len(wav_name)-4)] + '.csv'
     ground_truth_path = ground_truth_path.replace('_downsamp','')
     if(os.path.isfile(ground_truth_path)):
@@ -656,6 +850,15 @@ def get_ground_truth_labels(wav_name,ground_truth_dir):
         return labels
     
 def get_ground_truth_labels_megan(wav_name, ground_truth_path):
+    """Generate pandas data frame of ground truth labels associated with an audio file wav_name. Generate from the focal recordings Megan sent over (not collar data)
+    
+    Parameters:
+    wav_name (str): name of wav file (not full path) for which a corresponding csv file of labels should be found
+    ground_truth_dir (str): directory where csv ground truth labels should be stored (Audition format)
+    
+    Returns:
+    labels (pandas data frame): data frame of ground truth labels
+    """
     filename = wav_name[0:(len(wav_name)-3)] + 'txt'
 
     #if ground truth file exists, read it in, otherwise return None
@@ -680,6 +883,17 @@ def get_ground_truth_labels_megan(wav_name, ground_truth_path):
     
     
 def get_start_end_time_labels(labels, focal_megan = False):
+    """Get the start and end times of the labeled period
+    
+    Parameters:
+    labels (pandas data frame): labels from Audition, generated by get_ground_truth_labels
+    focal_megan (bool): whether labels are from collar data or from data megan sent 
+        default = False
+        
+    Returns:
+    start_time_labels (float): start time of the labeled period
+    end_time_labels (float): end time of the labeled period
+    """
     #Only include detections and labels where the detection / labeling times overlap
     
     if(focal_megan):
@@ -692,6 +906,28 @@ def get_start_end_time_labels(labels, focal_megan = False):
     return (start_time_labels, end_time_labels)      
 
 def run_evaluation(pckl_path, thresh_range, save_dir, ground_truth_dir,call_types,boundary_thresh = 0.6, verbose = True, savename = None, ground_truth_path = None, foc_megan = False):
+    
+    """Run evaluation of detections vs ground truth data
+    
+    Parameters:
+    pckl_path (str): path to the outputted pckl file containing scores from a given file
+    thresh_range (1d np array): upper thresholds to use
+    save_dir (str): path to directory where results should be saved
+    ground_truth_dir (str): path to directory where ground truth labels are stored
+    call_types (list of strings): list of call types
+    boundary_thresh (float): lower threshold for double threshold method
+        default = 0.6
+    verbose (bool): whether to print progress
+    savename (str or None): name of file to save results in
+        default = None (generate a name in standard format automatically)
+    ground_truth_path (str or None): path to where ground truth labels are stored
+        default = None (this is only needed if foc_megan == True)
+     foc_megan (bool): whether running eval on data from megan or collar data
+         default = False (collar data)
+         
+    Returns:
+    0, if successful, saves evaluation output in pckl file at pckl_path
+    """
     
     if(not(os.path.isfile(pckl_path))):
         print('pckl path does not exist')
@@ -797,6 +1033,24 @@ def run_evaluation(pckl_path, thresh_range, save_dir, ground_truth_dir,call_type
 #Funcs to generate data
 def generate_sample_call_for_classif(files, clips_dir, max_size = 512, call_type = 'cc', call_types = ['cc','sn','ld','mov','agg','alarm','soc','hyb','unk','oth'], verbose=False):
 
+    """Generate call spectrogram and type label. For classification.
+    
+    Parameters:
+    files (list of strings): list of files in clips_dir (audio clips)
+    clips_dir (str): directory where clips are stored
+    max_size (int): maximum size of spectrogram image
+        default = 512
+    call_type (str): what type of call should be generated 
+        default = 'cc'
+    call_types (list of strs): list of all call types (their order determines the integer used as classif label)
+        default = ['cc','sn','ld','mov','agg','alarm','soc','hyb','unk','oth']
+    verbose (bool): whether to print progress
+    
+    Returns:
+    X (max_size x 128 np array): spectrogram image, with 0 padding after end of call
+    y (int): integer label for call type
+    """
+    
     #hard coded parameters for now
     samprate=8000
     pad_len = 127
@@ -840,6 +1094,21 @@ def generate_sample_call_for_classif(files, clips_dir, max_size = 512, call_type
 
 def generate_batch_for_classif(batch_size,clips_dir,call_types = ['cc','sn','ld','mov','agg','alarm','soc','hyb','unk','oth'],call_probs = None, verbose=False):
     
+    """Generate a batch of calls and labels for classification.
+    
+    Parameters:
+    batch_size (int): size of batch to generate
+    clips_dir (str): path to directory where clips are stored
+    call_types (list of strings): list of call types to use
+        default = ['cc','sn','ld','mov','agg','alarm','soc','hyb','unk','oth']
+    call_probs (list of floats or None): list of call probabilities (prob of drawing each type)
+        default = None (draw each call type equally often)
+        
+    Returns:
+    X (batch_size x 512 x 128 x 1 np array): stack of spectrograms
+    y (np array of ints, len batch_size): call labels (integers) 
+    """
+    
     #list files
     files = os.listdir(clips_dir)
     
@@ -878,10 +1147,37 @@ def generate_batch_for_classif(batch_size,clips_dir,call_types = ['cc','sn','ld'
 
 #Data generators 
 def data_generator_for_classif(clips_dir,batch_size=10,call_types = ['cc','sn','ld','mov','agg','alarm','soc','hyb','unk','oth'],call_probs = [1./7,1./7,1./7,1./7,1./7,1./7,1./7,0,0,0],verbose=False):
+    """Data generator for classification task
+    
+    Parameters:
+    clips_dir (str): directory where call clips are stored
+    batch_size (int): batch size
+        default = 10
+    call_types (list of strings): list of call types
+        default = ['cc','sn','ld','mov','agg','alarm','soc','hyb','unk','oth']
+    call_probs (list of floats): probabilities of drawing each call type, must add to 1
+        default = [1./7,1./7,1./7,1./7,1./7,1./7,1./7,0,0,0], i.e. don't train on hyb, unk, or oth calls
+    verbose (bool): whether to print progress
+    
+    Returns:
+    a data generator for classification training
+    """
+    
     while True:
         yield generate_batch_for_classif(batch_size,clips_dir,call_types,call_probs,verbose=verbose)
 
 def classifier_model(n_classes=10):
+    
+    """Generate a CNN model for classifying calls into types.
+    
+    Parameters:
+        n_classes: number of classes to output
+            default = 10
+        
+    Returns:
+        model: a CNN model
+    """
+    
     inputs = Input(shape=(None, None,1))
     x = inputs
     x = Conv2D(32, (3, 3), activation='relu')(x)
@@ -908,6 +1204,16 @@ def classifier_model(n_classes=10):
 
 #read in labels from Audition format file and pre-process
 def read_labels_for_classif(test_csv):
+    
+    """Read in labels for classification from a csv
+    
+    Parameters:
+    test_csv (str): path to a csv file containing labels (Audition format)
+    
+    Returns:
+    labels (pandas data frame): data frame containing call labels
+    """
+    
     labels = pandas.read_csv(test_csv,delimiter='\t')
     labels['t0'] = [hms_to_seconds(x) for x in labels['Start']]
     labels['dur'] = [hms_to_seconds(x) for x in labels['Duration']]
@@ -922,6 +1228,27 @@ def read_labels_for_classif(test_csv):
     return labels
 
 def generate_test_data_for_classif(labels,test_wav,pad_len=127, samprate=8000,win_len=4096,call_types=['cc','sn','ld','mov','agg','alarm','soc','hyb','unk','oth'],verbose=True):
+    
+    """Generate a stack of test data for the classification of calls
+    
+    Parameters:
+    labels (pandas data frame): data frame containing call ground truth labels (generated from read_labels_for_classif)
+    test_wav (str): path to a wav file to draw calls from
+    pad_len (int): length of padding for spectrogram generation
+        default = 127
+    samprate (int): sample rate
+        default = 8000
+    win_len (int): window length
+        default = 4096
+    call_types (list of strings): list of call types
+        default = ['cc','sn','ld','mov','agg','alarm','soc','hyb','unk','oth']
+    verbose (bool): whether to print progress
+    
+    Returns:
+    X (n_calls x 512 x 128 x 1 np array): stack of spectrograms to use as test data
+    y (np array of len n_calls): integer labels for the test data call types
+    """
+    
     #create empty lists to hold spectrograms (input) and call labels (output)
     X_list = []
     y_list = []
@@ -963,6 +1290,19 @@ def generate_test_data_for_classif(labels,test_wav,pad_len=127, samprate=8000,wi
     return(X,y)
 
 def evaluate_classif(model,X,y,call_types):
+    
+    """Evaluation classification accuracy and generate confusion matrix
+    
+    Parameters:
+    model: classification model
+    X (n_calls x 512 x 128 x 1 np array): data in the form of spectrograms
+    y (np array of len n_calls): numeric labels of call types
+    call_types (list of strings): list of call types
+    
+    Returns:
+    confusion (n_calls x n_calls np array): a confusion matrix
+    """
+    
     out = model.predict(X)
     preds = np.zeros(out.shape[0],dtype='int')
     for i in range(out.shape[0]):
@@ -976,21 +1316,53 @@ def evaluate_classif(model,X,y,call_types):
     
     return(confusion)
 
-def plot_confusion_matrix(confusion,call_types,logscale=True):
+def plot_confusion_matrix(confusion,call_types,logscale=True,normalize_by_reals = True, normalize_by_preds = False):
+    
+    """Plot confusion matrix
+    
+    Parameters:
+    confusion (n_calls x n_calls np array of ints): confusion matrix
+    call_types (list of strings): call labels associated with matrix indexes
+    logscale (bool): whether to use log scale for the colors on the plot
+        default = True
+    normalize_by_reals (bool): whether to normalize colors so that real call types add to 1
+    normalize_by_preds (bool): whether to normalize colors so that predicted call types add to 1
+    
+    Returns:
+    fig: a confusion matrix figure
+    """
+    
     fig = plt.figure()
     plt.xticks(np.arange(start=0,stop=len(call_types)),call_types,rotation='vertical')
     plt.yticks(np.arange(start=0,stop=len(call_types)),call_types)
     plt.ylabel('real')
     plt.xlabel('predicted')
-    plt.imshow(confusion)
+    to_plot = confusion
+    if(normalize_by_reals):
+        to_plot = normalize(confusion,axis=1,norm='l1')
+    elif(normalize_by_preds):
+        to_plot = normalize(confusion,axis=0,norm='l1')
+    if(logscale):
+        plt.imshow(np.log(to_plot))
+    else:
+        plt.imshow(to_plot)
     for i in range(confusion.shape[0]):
         for j in range(confusion.shape[1]):
             plt.annotate(text = str(int(confusion[i,j])), xy=(j, i), ha='center',va='center',color='red')
     return(fig)
 
 #MISC FUNCS
-#Convert HMS format times to seconds
 def hms_to_seconds(t):
+  
+  """Convert HMS format times to seconds
+  
+  Parameters:
+  t (str): time in H:M:S format from Audition
+  
+  Returns:
+  sec (float): time in seconds
+  """
+    
   s = t.split(':')
   if(len(s)==3):
     sec = int(s[0])*3600 + int(s[1])*60 + float(s[2])
