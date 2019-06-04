@@ -44,6 +44,18 @@ class CallExtractionOutput:
     self.times = times
     self.scores = scores
     
+class CallClassificationOutput:
+  def __init__(self, call_extraction_params, times, scores, call_times, pred_call_types, pred_call_scores, seg_thresh, seg_boundary_thresh, classification_model):
+    self.call_extraction_params = call_extraction_params
+    self.times = times
+    self.scores = scores
+    self.call_times = call_times
+    self.pred_call_types = pred_call_types
+    self.pred_call_scores = pred_call_scores
+    self.seg_thresh = seg_thresh
+    self.seg_boundary_thresh = seg_boundary_thresh
+    self.classification_model = classification_model
+    
 class EvaluationOutput:
   def __init__(self, thresh_range,boundary_thresh,precisions,recalls_foc,recalls_non,true_pos_foc,true_pos_non,false_neg_foc,false_neg_non,pckl_path,call_types):
     self.threshes = thresh_range
@@ -625,7 +637,7 @@ def segment_calls(times,scores,min_thresh,boundary_thresh):
     calls = np.reshape(calls,(len(calls),2))
     return(calls)
 
-def generate_call_labels_audition(calls,times,scores,csv_name):
+def generate_call_labels_audition(calls,times,scores,csv_name,classifs=None):
     """Generate a csv file (formatted to be read into audition) with predicted calls and their scores
     
     Parameters:
@@ -633,6 +645,8 @@ def generate_call_labels_audition(calls,times,scores,csv_name):
     times (1d numpy array): vector of times for the audio file
     scores (1d numpy array): scores between 0 and 1 for each time step (same length as times) 
     csv_name (str): what to name the output csv (full path)
+    classifs (1d numpy array of strs or None): predicted classifications
+        default = None (in this case don't label with classification predictions)
     
     Returns:
     Nothing (saves output file to csv_name)
@@ -644,7 +658,10 @@ def generate_call_labels_audition(calls,times,scores,csv_name):
         for i in range(calls.shape[0]):
             idx0 = np.where(times == calls[i,0])[0][0]
             idxf = np.where(times == calls[i,1])[0][0]
-            name = str(np.max(scores[idx0:idxf]))
+            if(classifs==None):
+                name = str(np.max(scores[idx0:idxf]))
+            else:
+                name = classifs[i] + ' (' + str(np.max(scores[idx0:idxf])) + ')'
             start = str(datetime.timedelta(seconds=calls[i,0]))
             dur = str(datetime.timedelta(seconds=calls[i,1]-calls[i,0]))
             writer.writerow([name,start,dur,'decimal','Cue',''])
