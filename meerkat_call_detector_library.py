@@ -625,11 +625,19 @@ def segment_calls(times,scores,min_thresh,boundary_thresh):
         if scores[i] >= min_thresh:
             fwd = 1
             back = 1
-            while ((i+fwd) < max_idx) & (scores[i + fwd] >= boundary_thresh):
-                fwd = fwd + 1
-            while ((i-back) > min_idx) & (scores[i - back] >= boundary_thresh):
-                back = back + 1
-            calls.append((times[i-back], times[i+fwd]))
+            while ((i+fwd) < max_idx):
+                if (scores[i + fwd] >= boundary_thresh):
+                    fwd = fwd + 1
+                else:
+                    break
+            while ((i-back) > min_idx):
+                if (scores[i - back] >= boundary_thresh):
+                    back = back + 1
+                else:
+                    break
+            
+            if((i-back) >=0) & ((i+fwd) < max_idx):
+                calls.append((times[i-back], times[i+fwd]))
             i = i + fwd
         else:
             i = i + 1
